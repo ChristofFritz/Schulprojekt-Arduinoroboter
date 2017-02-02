@@ -1,130 +1,179 @@
 #include <AFMotor.h>
 #include <Wire.h>
 
-//AF_DCMotor motorL(3);
-//AF_DCMotor motorR(4);
+AF_DCMotor motorL(3);
+AF_DCMotor motorR(4);
 
 #define uchar unsigned char
 uchar t;
 uchar data[16];
 
 byte dataByte[8];
-byte dataByteOffset[8];
 bool line[8];
-bool sensorInitialized;
 byte threshhold;
 uchar tempData;
 
+bool stop;
+
 void setup()
 {
-  //motorL.setSpeed(160);
-  //motorL.run(FORWARD);
+  stop = false;
   
-  //motorR.setSpeed(160);
-  //motorR.run(FORWARD);
-  
-  //delay(1000);
-  
-  //motorL.setSpeed(0);
-  //motorL.run(RELEASE);
+  motorL.setSpeed(0);
+  motorL.run(RELEASE);
  
-  //motorR.setSpeed(0);
-  //motorR.run(RELEASE);
+  motorR.setSpeed(0);
+  motorR.run(RELEASE);
   
   Serial.begin(9600);
   Serial.println("HALLO WELT");
+  
   t = 0;
-  threshhold = 100;
-
-  sensorInitialized = false;
-  initSensor();
+  threshhold = 10;
+  
+  motorL.run(FORWARD);
+  motorR.run(FORWARD);
 }
 
-void initSensor()
+void loop()
 {
-  Serial.println("Sensor initialisieren");
+  readSensorData();
+  printSensorDataToSerial();
+  setMotorspeed();
+  delay(10);
+}
 
-  byte data1[8];
-  byte data2[8];
-  byte data3[8];
-  byte data4[8];
+// SENSOREN:
+// 00000000
+// L______R
 
-  Serial.println("1/4");
-  readSensorData(data1);
-  Serial.println("2/4");
-  delay(1000);
-  readSensorData(data2);
-  Serial.println("3/4");
-  delay(1000);
-  readSensorData(data3);
-  Serial.println("4/4");
-  delay(1000);
-  readSensorData(data4);
+// 0 010 255
+// 1 060 220
+// 2 090 190
+// 3 130 160
+// 4 160 130
+// 5 190 090
+// 6 220 060
+// 7 255 010
 
-  for(int i = 0; i < 8; i++)
+void setMotorspeed()
+{
+  int tempLeft = 0;
+  int tempRight = 0;
+  int count = 0;
+
+  if(line[0] && line[1] && line[2] && line[3] && line[4] && line[5] && line[6] && line[7])
   {
-    int temp = data1[i];
-    temp += data2[i];
-    temp += data3[i];
-    temp += data4[i];
-
-    temp = byte((temp - 40) / 4);
-    
-    dataByteOffset[i] = temp;
-
-    Serial.print(String(i) + ": " + String(dataByteOffset[i]) + " | ");
+    stop = true;
+  }
+  else
+  {
+    stop = false;
+  }
+  
+  if (line[0])
+  {
+    tempLeft += 10;
+    tempRight += 255;
+    count++;
   }
 
-  delay(3000);
-  Serial.println("");
-  
-  Serial.println("Sensor initialisiert");
-  sensorInitialized = true;
+  if (line[1])
+  {
+    tempLeft += 60;
+    tempRight += 220;
+    count++;
+  }
+
+  if (line[2])
+  {
+    tempLeft += 90;
+    tempRight += 190;
+    count++; 
+  }
+
+  if (line[3])
+  {
+    tempLeft += 130;
+    tempRight += 160;
+    count++;
+  }
+
+  if (line[4])
+  {
+    tempLeft += 160;
+    tempRight += 130;
+    count++;
+  }
+
+  if (line[5])
+  {
+    tempLeft += 190;
+    tempRight += 90;
+    count++; 
+  }
+
+  if (line[6])
+  {
+    tempLeft += 220;
+    tempRight += 60;
+    count++; 
+  }
+
+  if (line[7])
+  {
+    tempLeft += 255;
+    tempRight += 10;
+    count++;
+  }
+
+  if (count == 0)
+  {
+    tempLeft = 0;
+    tempRight = 0;
+  }
+
+  tempLeft = tempLeft / count;
+  tempRight = tempRight / count;
+
+  if (stop == false)
+  {
+    motorL.setSpeed(0);
+    motorR.setSpeed(0);
+  }
+  else
+  {
+    motorL.setSpeed(250);
+    delay(10);
+    motorL.setSpeed(tempLeft);
+    
+    motorR.setSpeed(250);
+    delay(10);
+    motorR.setSpeed(tempRight);
+  }
 }
 
 void printSensorDataToSerial()
 {
   for (int i = 0; i < 8; i++)
   {
-    Serial.print(String(i) + "\t");
+    Serial.print(String(line[i]) + "");
   }
-  Serial.println("");
-  
-  for (int i = 0; i < 8; i++)
-  {
-    Serial.print(String(line[i]) + "\t");
-  }
-  Serial.println("");
-  
-  for (int i = 0; i < 8; i++)
-  {
-    Serial.print(String(dataByte[i]) + "\t");
-  }
-  Serial.println("");
   Serial.println("");
 }
 
-void readSensorData(byte data[])
+void readSensorData()
 {
   Wire.begin();
-  Serial.println("TEST1");
   Wire.requestFrom(9, 16);
-  Serial.println("TEST2");
   while (Wire.available())
   {
     tempData = Wire.read();
     
     if (t % 2 == 0)
     {
-      if (sensorInitialized == true)
-      {
-        tempData = tempData - dataByteOffset[t/2];
-      }
-      
-      data[t/2] = tempData;
+      dataByte[t/2] = tempData;
       line[t/2] = tempData < threshhold;
-      
-      // Serial.println(String(t) + "\t" + String(tempData) + "\t" + line[t/2]);
     }
     
     if (t < 15)
@@ -133,16 +182,3 @@ void readSensorData(byte data[])
       t = 0;
   }
 }
-
-void loop()
-{
-  readSensorData(dataByte);
-  printSensorDataToSerial();
-  Serial.println("");
-  Serial.println("");
-  delay(500);
-}
-
-
-
-
