@@ -12,6 +12,7 @@ byte dataByte[8];
 bool line[8];
 byte threshhold;
 uchar tempData;
+int left, right;
 
 bool stop;
 
@@ -20,10 +21,10 @@ void setup()
   stop = false;
   
   motorL.setSpeed(0);
-  motorL.run(RELEASE);
+  motorL.run(FORWARD);
  
   motorR.setSpeed(0);
-  motorR.run(RELEASE);
+  motorR.run(FORWARD);
   
   Serial.begin(9600);
   Serial.println("HALLO WELT");
@@ -60,97 +61,96 @@ void setMotorspeed()
 {
   int tempLeft = 0;
   int tempRight = 0;
-  int count = 0;
-
-  if(line[0] && line[1] && line[2] && line[3] && line[4] && line[5] && line[6] && line[7])
+  
+  if (line[0] && line[1] && line[2] && line[3] && line[4] && line[5] && line[6] && line[7])
   {
-    stop = true;
+    tempRight = 0;
+    tempLeft = 0;
+  }
+  else if (
+    (line[0] == false) && 
+    (line[1] == false) &&
+    (line[2] == false) &&
+    (line[3] == false) &&
+    (line[4] == false) &&
+    (line[5] == false) &&
+    (line[6] == false) && 
+    (line[7] == false))
+  {
+    tempLeft = left;
+    tempRight = right;
   }
   else
   {
-    stop = false;
+    if (line[0] || line[1])
+    {
+      tempRight = 250;
+      tempLeft = 0;
+    }
+    
+    if (line[6] || line[7])
+    {
+      tempRight = 0;
+      tempLeft = 250;
+    }
+  
+    if (line[3] || line[4])
+    {
+      tempRight = 250;
+      tempLeft = 250;
+    }
+    
+    if (line[2])
+    {
+      tempRight = 200;
+      tempLeft = 0;
+    }
+    
+    if (line[5])
+    {
+      tempRight = 0;
+      tempLeft = 200;
+    }
+  }
+
+  if (tempLeft < 0)
+  {
+    motorL.run(BACKWARD);
+    tempLeft = (-1) * tempLeft;
+  }
+  else if (tempLeft > 0)
+  {
+    motorL.run(FORWARD);
+  }
+  else
+  {
+    motorL.run(RELEASE);
   }
   
-  if (line[0])
+  if (tempRight < 0)
   {
-    tempLeft += 10;
-    tempRight += 255;
-    count++;
+    motorR.run(BACKWARD);
+    tempRight = (-1) * tempRight;
   }
-
-  if (line[1])
+  else if (tempRight > 0)
   {
-    tempLeft += 60;
-    tempRight += 220;
-    count++;
-  }
-
-  if (line[2])
-  {
-    tempLeft += 90;
-    tempRight += 190;
-    count++; 
-  }
-
-  if (line[3])
-  {
-    tempLeft += 130;
-    tempRight += 160;
-    count++;
-  }
-
-  if (line[4])
-  {
-    tempLeft += 160;
-    tempRight += 130;
-    count++;
-  }
-
-  if (line[5])
-  {
-    tempLeft += 190;
-    tempRight += 90;
-    count++; 
-  }
-
-  if (line[6])
-  {
-    tempLeft += 220;
-    tempRight += 60;
-    count++; 
-  }
-
-  if (line[7])
-  {
-    tempLeft += 255;
-    tempRight += 10;
-    count++;
-  }
-
-  if (count == 0)
-  {
-    tempLeft = 0;
-    tempRight = 0;
-  }
-
-  tempLeft = tempLeft / count;
-  tempRight = tempRight / count;
-
-  if (stop == false)
-  {
-    motorL.setSpeed(0);
-    motorR.setSpeed(0);
+    motorR.run(FORWARD);
   }
   else
   {
-    motorL.setSpeed(250);
-    delay(10);
-    motorL.setSpeed(tempLeft);
-    
-    motorR.setSpeed(250);
-    delay(10);
-    motorR.setSpeed(tempRight);
+    motorR.run(RELEASE);
   }
+
+  if (tempLeft == 0 && tempRight == 0)
+  {
+    delay(1000);
+  }
+
+  left = tempLeft;
+  right = tempRight;
+  
+  motorL.setSpeed(tempLeft);
+  motorR.setSpeed(tempRight);
 }
 
 void printSensorDataToSerial()
