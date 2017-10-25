@@ -1,184 +1,185 @@
-#include <AFMotor.h>
+#include <PID_v1.h>
 #include <Wire.h>
+#include <AFMotor.h>
 
-AF_DCMotor motorL(3);
-AF_DCMotor motorR(4);
+// Werteberechnung
+unsigned int raw_data[8], res_data[8], fil_data[8];
+unsigned long weighted_sum, sum;
+double error;
+int t, linePosition, linePosition_leftMost, linePosition_rightMost;
+bool setupDone = false;
 
-#define uchar unsigned char
-uchar t;
-uchar data[16];
+// PID
+double Setpoint, Input, Output;
 
-byte dataByte[8];
-bool line[8];
-byte threshhold;
-uchar tempData;
-int left, right;
+// double consKp=0.001, consKi=0.02, consKd=0.19; // Sehr Gut!
+double consKp=0.001, consKi=0.015, consKd=0.09;
+int generalMotorSpeed = 60;
 
-bool stop;
+PID mainPID(&Input, &Output, &Setpoint, consKp, consKi, consKd, DIRECT);
 
-void setup()
+// Motoren
+#include <AFMotor.h>
+AF_DCMotor motorL(4);
+AF_DCMotor motorR(3);
+
+/*
+  Daten des Sensors einlesen.
+*/
+void readDataRaw()
 {
-  stop = false;
-  
-  motorL.setSpeed(0);
-  motorL.run(FORWARD);
- 
-  motorR.setSpeed(0);
-  motorR.run(FORWARD);
-  
-  Serial.begin(9600);
-  Serial.println("HALLO WELT");
-  
-  t = 0;
-  threshhold = 10;
-  
-  motorL.run(FORWARD);
-  motorR.run(FORWARD);
+  Wire.requestFrom(9, 16);
+  for(int i = 0; i < 8; i++)
+  {
+    raw_data[i] = Wire.read() << 8 | Wire.read();
+    fil_data[i] = raw_data[i] < 520 ? 1 : 0;
+  }
 }
 
-void loop()
+/*
+  Die Linienposition errechnen.
+*/
+unsigned int calcLinePosition()
 {
-  readSensorData();
-  printSensorDataToSerial();
-  setMotorspeed();
-  delay(10);
+  weighted_sum = 0;
+  sum = 0;
+  
+  for (int i = 0; i < 8; i++)
+  {
+    weighted_sum += fil_data[i] * 100UL * (unsigned long)i;
+    sum += fil_data[i];
+  }
+
+  // Wenn die Summe 0 ist, haben wir die Linie verloren und dürfen die Position nicht neu setzen.
+  if (sum > 0 && sum < 4)
+  {
+    linePosition = map(weighted_sum / sum, 0, 700, 0, 255);
+  }
 }
 
-// SENSOREN:
-// 00000000
-// L______R
-
-// 0 010 255
-// 1 060 220
-// 2 090 190
-// 3 130 160
-// 4 160 130
-// 5 190 090
-// 6 220 060
-// 7 255 010
-
-void setMotorspeed()
+/*
+  Den Fehler berechnen.
+*/
+void calcError()
 {
-  int tempLeft = 0;
-  int tempRight = 0;
-  
-  if (line[0] && line[1] && line[2] && line[3] && line[4] && line[5] && line[6] && line[7])
-  {
-    tempRight = 0;
-    tempLeft = 0;
-  }
-  else if (
-    (line[0] == false) && 
-    (line[1] == false) &&
-    (line[2] == false) &&
-    (line[3] == false) &&
-    (line[4] == false) &&
-    (line[5] == false) &&
-    (line[6] == false) && 
-    (line[7] == false))
-  {
-    tempLeft = left;
-    tempRight = right;
-  }
-  else
-  {
-    if (line[0] || line[1])
-    {
-      tempRight = 250;
-      tempLeft = 0;
-    }
-    
-    if (line[6] || line[7])
-    {
-      tempRight = 0;
-      tempLeft = 250;
-    }
-  
-    if (line[3] || line[4])
-    {
-      tempRight = 250;
-      tempLeft = 250;
-    }
-    
-    if (line[2])
-    {
-      tempRight = 200;
-      tempLeft = 0;
-    }
-    
-    if (line[5])
-    {
-      tempRight = 0;
-      tempLeft = 200;
-    }
-  }
-
-  if (tempLeft < 0)
-  {
-    motorL.run(BACKWARD);
-    tempLeft = (-1) * tempLeft;
-  }
-  else if (tempLeft > 0)
-  {
-    motorL.run(FORWARD);
-  }
-  else
-  {
-    motorL.run(RELEASE);
-  }
-  
-  if (tempRight < 0)
-  {
-    motorR.run(BACKWARD);
-    tempRight = (-1) * tempRight;
-  }
-  else if (tempRight > 0)
-  {
-    motorR.run(FORWARD);
-  }
-  else
-  {
-    motorR.run(RELEASE);
-  }
-
-  if (tempLeft == 0 && tempRight == 0)
-  {
-    delay(1000);
-  }
-
-  left = tempLeft;
-  right = tempRight;
-  
-  motorL.setSpeed(tempLeft);
-  motorR.setSpeed(tempRight);
+  error = linePosition - 127;
 }
 
-void printSensorDataToSerial()
+/*
+  Daten des Sensors ausgeben
+*/
+void printDataToSerial(unsigned int data[8])
 {
   for (int i = 0; i < 8; i++)
   {
-    Serial.print(String(line[i]) + "");
+    Serial.print(data[i]);
+    Serial.print("");
   }
-  Serial.println("");
+  
+  Serial.println();
 }
 
-void readSensorData()
+/*
+  Das Setup.
+*/
+void setup()
 {
+  Serial.begin(9600);
+  Serial.println("LineFollower v1");
+  
   Wire.begin();
-  Wire.requestFrom(9, 16);
-  while (Wire.available())
+  t = 0;
+  
+  readDataRaw();
+  calcLinePosition();
+  calcError();
+  
+  //initialize the variables we're linked to
+  Input = error;
+  Setpoint = 0;
+
+  //turn the PID on
+  mainPID.SetOutputLimits(-255, 255);
+  mainPID.SetMode(AUTOMATIC);
+  
+  setupDone = true;
+}
+
+/*
+  Der Loop.
+*/
+void loop()
+{
+  readDataRaw();
+  calcLinePosition();
+  calcError();
+  
+  Input = error;
+  mainPID.Compute();
+
+  // printDataToSerial(fil_data);
+  // printDataToSerial(raw_data);
+
+  // Serial.println(Output);
+  
+  // Error negativ => Output positiv => nach links fahren
+  // Error positiv => Output negativ => nach rechts fahren
+  
+  int leftMotorSpeed = generalMotorSpeed + Output;
+  int rightMotorSpeed = generalMotorSpeed - Output;
+
+  leftMotorSpeed = constrain(leftMotorSpeed, 0, 255);
+  rightMotorSpeed = constrain(rightMotorSpeed, 0, 255);
+  
+  if (leftMotorSpeed < 0)
   {
-    tempData = Wire.read();
-    
-    if (t % 2 == 0)
-    {
-      dataByte[t/2] = tempData;
-      line[t/2] = tempData < threshhold;
-    }
-    
-    if (t < 15)
-      t++;
-    else
-      t = 0;
+    motorL.run(BACKWARD);
   }
+  else
+  {
+    motorL.run(FORWARD);
+  }
+  
+  if (rightMotorSpeed < 0)
+  {
+    motorR.run(BACKWARD);
+  }
+  else
+  {
+    motorR.run(FORWARD);
+  }
+
+  // Gucken ob linie da. Wenn nicht, rumdrehen, wenn ja, weiterfahren.´
+  // int sum = 0;
+  // for (int i = 0; i < 8; i++)
+  // {
+  //   sum += fil_data[i];
+  // }
+
+  // if (sum > 0)
+  // {
+    // Weiterfahren
+  // }
+  // else
+  // {
+    // Rumdrehen
+    // motorL.setSpeed(0);
+    // motorR.setSpeed(0);
+  // } 
+  
+  motorL.setSpeed(abs(leftMotorSpeed));
+  motorR.setSpeed(abs(rightMotorSpeed)); 
+  
+  // Serial.print("LinePos: ");
+  // Serial.println(linePosition);
+  // 
+  // Serial.print("Error:   ");
+  // Serial.println(error);
+  // 
+  // Serial.print("Output:  ");
+  // Serial.println(Output);
+  // Serial.println();
+  
+  delay(10);
+  // delay(500);
 }
