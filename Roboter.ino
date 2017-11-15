@@ -1,44 +1,117 @@
-#include <PID_v1.h>
+#include "pb_LEDLight.h"
 #include <Wire.h>
-#include <AFMotor.h>
+#include <PID_v1.h>
 
-// Werteberechnung
-unsigned int raw_data[8], res_data[8], fil_data[8];
+// Linienberachnung
+unsigned int raw_data[8], fil_data[8];
 unsigned long weighted_sum, sum;
 double error;
-int t, linePosition, linePosition_leftMost, linePosition_rightMost;
-bool setupDone = false;
+int linePosition;
 
-// PID
+// PID Regler
 double Setpoint, Input, Output;
 
-// double consKp=0.001, consKi=0.02, consKd=0.19; // Sehr Gut!
-double consKp=0.001, consKi=0.015, consKd=0.09;
-int generalMotorSpeed = 60;
+// double Kp=0.09, Ki=0, Kd=0.07; Extrem gut. Fährt bereits > 15 Minuten ohne Proleme!
+// double Kp=0.09, Ki=0, Kd=0.062; Auch gut
+// double Kp=0.09, Ki=0, Kd=0.060; Auch gut
 
-PID mainPID(&Input, &Output, &Setpoint, consKp, consKi, consKd, DIRECT);
+double Kp=0.09, Ki=0, Kd=0.07;
+
+int generalMotorSpeed=45;
+bool driveOn = true;
+
+PID mainPID(&Input, &Output, &Setpoint, Kp, Ki, Kd, DIRECT);
 
 // Motoren
-#include <AFMotor.h>
-AF_DCMotor motorL(4);
-AF_DCMotor motorR(3);
+// Richtung
+const int motorBPhasePin = 11;
+const int motorAPhasePin = 12;
+// Geschwindigkeit
+const int motorBEnablePin = 9;
+const int motorAEnablePin = 10;
 
-/*
-  Daten des Sensors einlesen.
-*/
-void readDataRaw()
+const int modePin = 8;
+
+void setup()
 {
-  Wire.requestFrom(9, 16);
-  for(int i = 0; i < 8; i++)
+  Serial.begin(9600);
+  Wire.begin();
+  pb_init();
+
+  digitalWrite(modePin, HIGH);
+  
+  readData();
+  calcLinePosition();
+
+  Input = error;
+  Setpoint = 0;
+  
+  mainPID.SetOutputLimits(-255, 255);
+  mainPID.SetMode(AUTOMATIC);
+}
+
+void loop()
+{
+  readData();
+  calcLinePosition();
+  
+  Input = error;
+  mainPID.Compute();
+  
+  double b = 0;
+  for (uint8_t i = 0; i < 8; i++)
   {
-    raw_data[i] = Wire.read() << 8 | Wire.read();
-    fil_data[i] = raw_data[i] < 520 ? 1 : 0;
+    if (fil_data[i] == 1)
+    {
+      b += pow(2, i);
+    }
   }
+
+  b += 0.1;
+
+  writeNumber((byte)b);
+  showNumber();
+
+  // Wenn er eine Querlinie sieht, muss er schauen, ob die Fahrlinie danach weitergeht.
+  // Wenn keine mehr da ist, rumdrehen.
+  // Wenn noch eine da ist, weiter fahren.
+
+  int leftMotorSpeed = generalMotorSpeed + Output;
+  int rightMotorSpeed = generalMotorSpeed - Output;
+
+  leftMotorSpeed = constrain(leftMotorSpeed, 0, 255);
+  rightMotorSpeed = constrain(rightMotorSpeed, 0, 255);
+  
+  if (rightMotorSpeed < 0)
+  {
+    digitalWrite(motorBPhasePin, HIGH);
+  }
+  else
+  {
+    digitalWrite(motorBPhasePin, LOW);
+  }
+  
+  if (leftMotorSpeed < 0)
+  {
+    digitalWrite(motorAPhasePin, HIGH);
+  }
+  else
+  {
+    digitalWrite(motorAPhasePin, LOW);
+  }
+
+  if (driveOn == true)
+  {
+    analogWrite(motorBEnablePin, abs(rightMotorSpeed));
+    analogWrite(motorAEnablePin, abs(leftMotorSpeed)); 
+  }
+  
+  delay(150);
 }
 
 /*
-  Die Linienposition errechnen.
-*/
+ * Linienposition und Fehlerwert  berechnen.
+ */
 unsigned int calcLinePosition()
 {
   weighted_sum = 0;
@@ -55,131 +128,19 @@ unsigned int calcLinePosition()
   {
     linePosition = map(weighted_sum / sum, 0, 700, 0, 255);
   }
-}
 
-/*
-  Den Fehler berechnen.
-*/
-void calcError()
-{
   error = linePosition - 127;
 }
 
 /*
-  Daten des Sensors ausgeben
-*/
-void printDataToSerial(unsigned int data[8])
+ * Daten des Liniensensors lesen und verarbeiten.
+ */
+void readData()
 {
-  for (int i = 0; i < 8; i++)
+  Wire.requestFrom(9, 16);
+  for(int i = 0; i < 8; i++)
   {
-    Serial.print(data[i]);
-    Serial.print("");
+    raw_data[i] = Wire.read() << 8 | Wire.read();
+    fil_data[i] = raw_data[i] < 540 ? 1 : 0;
   }
-  
-  Serial.println();
-}
-
-/*
-  Das Setup.
-*/
-void setup()
-{
-  Serial.begin(9600);
-  Serial.println("LineFollower v1");
-  
-  Wire.begin();
-  t = 0;
-  
-  readDataRaw();
-  calcLinePosition();
-  calcError();
-  
-  //initialize the variables we're linked to
-  Input = error;
-  Setpoint = 0;
-
-  //turn the PID on
-  mainPID.SetOutputLimits(-255, 255);
-  mainPID.SetMode(AUTOMATIC);
-  
-  setupDone = true;
-}
-
-/*
-  Der Loop.
-*/
-void loop()
-{
-  readDataRaw();
-  calcLinePosition();
-  calcError();
-  
-  Input = error;
-  mainPID.Compute();
-
-  // printDataToSerial(fil_data);
-  // printDataToSerial(raw_data);
-
-  // Serial.println(Output);
-  
-  // Error negativ => Output positiv => nach links fahren
-  // Error positiv => Output negativ => nach rechts fahren
-  
-  int leftMotorSpeed = generalMotorSpeed + Output;
-  int rightMotorSpeed = generalMotorSpeed - Output;
-
-  leftMotorSpeed = constrain(leftMotorSpeed, 0, 255);
-  rightMotorSpeed = constrain(rightMotorSpeed, 0, 255);
-  
-  if (leftMotorSpeed < 0)
-  {
-    motorL.run(BACKWARD);
-  }
-  else
-  {
-    motorL.run(FORWARD);
-  }
-  
-  if (rightMotorSpeed < 0)
-  {
-    motorR.run(BACKWARD);
-  }
-  else
-  {
-    motorR.run(FORWARD);
-  }
-
-  // Gucken ob linie da. Wenn nicht, rumdrehen, wenn ja, weiterfahren.´
-  // int sum = 0;
-  // for (int i = 0; i < 8; i++)
-  // {
-  //   sum += fil_data[i];
-  // }
-
-  // if (sum > 0)
-  // {
-    // Weiterfahren
-  // }
-  // else
-  // {
-    // Rumdrehen
-    // motorL.setSpeed(0);
-    // motorR.setSpeed(0);
-  // } 
-  
-  motorL.setSpeed(abs(leftMotorSpeed));
-  motorR.setSpeed(abs(rightMotorSpeed)); 
-  
-  // Serial.print("LinePos: ");
-  // Serial.println(linePosition);
-  // 
-  // Serial.print("Error:   ");
-  // Serial.println(error);
-  // 
-  // Serial.print("Output:  ");
-  // Serial.println(Output);
-  // Serial.println();
-  
-  delay(10);
-  // delay(500);
 }
