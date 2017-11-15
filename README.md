@@ -1,13 +1,4 @@
-# Schulprojekt-Arduinoroboter
-Das Repository für das Schulprojekt.
+# Linienfolgender Arduinoroboter
 
-Aufgabe ist es eine Projektarbeit durchzuführen, wie wir sie als Projekt in der Ausbildung durchführen müssten.
-
-Unsere Aufgabe ist es, einen Arduinoroboter zu bauen und zu programmieren, sodass er einer Linie folgen kann.
-
-
-Teile:
-
-- Line Follower Module (https://www.sunfounder.com/wiki/index.php?title=Line_Follower_Module)
-- Arduino (Pro Mini / UNO)
-- Fahrgestell mit Motoren, Rädern und Batteriekasten
+Wie der Name schon vermuten lässt, geht es in diesem Repo um einen Roboter, der auf einem Arduino basiert ud einer Linie folgen können soll.
+Dieser Roboter besteht aus einem Arduino, einem Motirtreiber von Pololu, einem Liniensensor (8-Kanal) von Sunfounder und diversen anderen essenziellen Komponenten.
