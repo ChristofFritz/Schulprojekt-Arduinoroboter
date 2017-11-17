@@ -7,6 +7,7 @@ unsigned int raw_data[8], fil_data[8];
 unsigned long weighted_sum, sum;
 double error;
 int linePosition;
+uint8_t readIterationsPerCycle = 10;
 
 // PID Regler
 double Setpoint, Input, Output;
@@ -15,10 +16,10 @@ double Setpoint, Input, Output;
 // double Kp=0.09, Ki=0, Kd=0.062; Auch gut
 // double Kp=0.09, Ki=0, Kd=0.060; Auch gut
 
-double Kp=0.09, Ki=0, Kd=0.07;
+double Kp = 0.09, Ki = 0, Kd = 0.07;
 
-int generalMotorSpeed=45;
-bool driveOn = true;
+int generalMotorSpeed = 45;
+bool driveOn = true, sawEndpoint = false;
 
 PID mainPID(&Input, &Output, &Setpoint, Kp, Ki, Kd, DIRECT);
 
@@ -38,26 +39,108 @@ void setup()
   Wire.begin();
   pb_init();
 
+  Serial.println("Setup");
+
   digitalWrite(modePin, HIGH);
-  
+
   readData();
   calcLinePosition();
 
   Input = error;
   Setpoint = 0;
-  
+
   mainPID.SetOutputLimits(-255, 255);
   mainPID.SetMode(AUTOMATIC);
 }
 
+uint8_t counter = 0, counterMax = 8;
 void loop()
 {
   readData();
   calcLinePosition();
+  writeSensorDataToLEDS();
   
   Input = error;
   mainPID.Compute();
   
+  int leftMotorSpeed = generalMotorSpeed + Output;
+  int rightMotorSpeed = generalMotorSpeed - Output;
+
+  if (sumSensorValues() >= 4)
+  {
+    sawEndpoint = true;
+  }
+
+  if (sawEndpoint == true)
+  {
+    counter += 1;
+
+    if (counter > counterMax)
+    {
+      // readData();
+      if (sumSensorValues() <= 0)
+      {
+        driveMotors(0, 0);
+        delay(700);
+        driveOn = false;
+        driveMotors(55, -40);
+        do
+        {
+          delay(50);
+          readData();
+        } while (sumSensorValues() <= 0);
+        
+        driveMotors(0, 0);
+        driveOn = true;
+      }
+      
+      sawEndpoint = false;
+      counter = 0;
+    }
+  }
+
+  if (counter > counterMax)
+  {
+    counter = 0;
+  }
+
+  if (driveOn == true)
+  {
+    driveMotors(leftMotorSpeed, rightMotorSpeed);
+  }
+
+  delay(10);
+}
+
+void driveMotors(int leftMotorSpeed, int rightMotorSpeed)
+{
+  leftMotorSpeed = constrain(leftMotorSpeed, -255, 255);
+  rightMotorSpeed = constrain(rightMotorSpeed, -255, 255);
+
+  if (rightMotorSpeed < 0)
+  {
+    digitalWrite(motorBPhasePin, HIGH);
+  }
+  else
+  {
+    digitalWrite(motorBPhasePin, LOW);
+  }
+
+  if (leftMotorSpeed < 0)
+  {
+    digitalWrite(motorAPhasePin, HIGH);
+  }
+  else
+  {
+    digitalWrite(motorAPhasePin, LOW);
+  }
+
+  analogWrite(motorBEnablePin, abs(rightMotorSpeed));
+  analogWrite(motorAEnablePin, abs(leftMotorSpeed));
+}
+
+void writeSensorDataToLEDS()
+{
   double b = 0;
   for (uint8_t i = 0; i < 8; i++)
   {
@@ -71,42 +154,21 @@ void loop()
 
   writeNumber((byte)b);
   showNumber();
+}
 
-  // Wenn er eine Querlinie sieht, muss er schauen, ob die Fahrlinie danach weitergeht.
-  // Wenn keine mehr da ist, rumdrehen.
-  // Wenn noch eine da ist, weiter fahren.
-
-  int leftMotorSpeed = generalMotorSpeed + Output;
-  int rightMotorSpeed = generalMotorSpeed - Output;
-
-  leftMotorSpeed = constrain(leftMotorSpeed, 0, 255);
-  rightMotorSpeed = constrain(rightMotorSpeed, 0, 255);
-  
-  if (rightMotorSpeed < 0)
+/*
+ * Sensorwerte summieren.
+ */
+uint8_t sumSensorValues()
+{
+  uint8_t sensorSum = 0;
+  for (uint8_t i = 0; i < 8; i++)
   {
-    digitalWrite(motorBPhasePin, HIGH);
-  }
-  else
-  {
-    digitalWrite(motorBPhasePin, LOW);
-  }
-  
-  if (leftMotorSpeed < 0)
-  {
-    digitalWrite(motorAPhasePin, HIGH);
-  }
-  else
-  {
-    digitalWrite(motorAPhasePin, LOW);
+    sensorSum += fil_data[i];
   }
 
-  if (driveOn == true)
-  {
-    analogWrite(motorBEnablePin, abs(rightMotorSpeed));
-    analogWrite(motorAEnablePin, abs(leftMotorSpeed)); 
-  }
-  
-  delay(150);
+  Serial.println(sensorSum);
+  return sensorSum;
 }
 
 /*
@@ -116,7 +178,7 @@ unsigned int calcLinePosition()
 {
   weighted_sum = 0;
   sum = 0;
-  
+
   for (int i = 0; i < 8; i++)
   {
     weighted_sum += fil_data[i] * 100UL * (unsigned long)i;
@@ -137,10 +199,25 @@ unsigned int calcLinePosition()
  */
 void readData()
 {
-  Wire.requestFrom(9, 16);
-  for(int i = 0; i < 8; i++)
+  double avg_data[8];
+  for (int i = 0; i < 8; i++)
   {
-    raw_data[i] = Wire.read() << 8 | Wire.read();
-    fil_data[i] = raw_data[i] < 540 ? 1 : 0;
+    avg_data[i] = 0;
+  }
+
+  for (uint8_t iteration = 0; iteration < readIterationsPerCycle; iteration++)
+  {
+    Wire.requestFrom(9, 16);
+    for (int i = 0; i < 8; i++)
+    {
+      raw_data[i] = Wire.read() << 8 | Wire.read();
+      fil_data[i] = raw_data[i] < 540 ? 1 : 0;
+      avg_data[i] = ((double)iteration * avg_data[i] + (double)fil_data[i]) / (double)(iteration + 1) ;
+    }
+  }
+
+  for (int i = 0; i < 8; i++)
+  {
+    fil_data[i] = avg_data[i] < 0.5 ? 0 : 1;
   }
 }
